@@ -1,0 +1,59 @@
+# converted output and scratch folders
+/out/
+/converted/
+
+# logs and reports
+*.log
+*.report.txt
+
+# game archives and working trees. Games you extract for conversion are somebody
+# else's work: they get converted outside this folder, never inside it.
+archive/
+archive.rpa
+*.rpa
+*.rpy
+*.rpyc
+work/
+
+# python bytecode from running the converter tests
+__pycache__/
+*.pyc
+
+# macOS clutter, which shows up as ._name sidecar files
+.DS_Store
+._*
+__MACOSX/
+
+# No artwork, audio, fonts or game data here, ever. The games this was written
+# for belong to their authors. scripts/check-no-media.sh enforces this too.
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.webp
+*.tif
+*.tiff
+*.heic
+*.ico
+*.svg
+*.mp3
+*.wav
+*.ogg
+*.oga
+*.m4a
+*.aac
+*.flac
+*.opus
+*.wma
+*.aiff
+*.aif
+*.mp4
+*.mkv
+*.avi
+*.mov
+*.webm
+*.ttf
+*.otf
+*.woff
+*.woff2
