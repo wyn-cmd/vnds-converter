@@ -97,9 +97,13 @@ while IFS= read -r -d '' path; do
         continue
     fi
 
-    # -background none keeps sprite transparency, -strip drops metadata that the
-    # DS has no use for.
-    "$image_command" "$path" -background none "${geometry[@]}" -strip "$target"
+    # -background none keeps sprite transparency, -strip drops metadata the DS
+    # has no use for, and PNG32 forces 8-bit rgba. The last part matters: left
+    # to itself ImageMagick writes the smallest form it can, and a solid black
+    # background comes back as 1-bit greyscale. The DS loader reads palette, rgb
+    # and rgba, so a greyscale file does not show nothing, it takes the game down
+    # mid-scene.
+    "$image_command" "$path" -background none "${geometry[@]}" -strip "PNG32:$target"
     log "converted: $base -> $name.png"
     converted=$((converted + 1))
 done < <(find "$source_dir" -maxdepth 1 -type f \

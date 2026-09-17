@@ -12,6 +12,7 @@ Four stages, each usable alone or through `convert.sh`:
 
   `images.sh --mode background` forces backgrounds onto exactly 256x192, the DS screen, stretching by default or letterboxing with `--fit`
   `images.sh --mode foreground` scales sprites to a fixed height of 180 by default, keeping their aspect ratio and transparency
+  both image modes always write 8-bit RGBA, whatever went in. Left alone, ImageMagick writes a solid black frame as 1-bit greyscale, and the DS loader reads palette, rgb and rgba only, so a greyscale file does not show nothing, it takes the game down mid-scene
   `audio.sh` turns audio into MPEG-1 Layer 3 at 44100 Hz, and copies files that already are rather than re-encoding them
   `renpy-to-vnds.py` converts your Ren'Py script files into `.scr` files for the DS, and reports everything it could not translate instead of guessing
   `rename.sh` strips spaces out of filenames, recursively or one level deep, with a dry run

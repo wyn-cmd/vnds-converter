@@ -51,6 +51,10 @@ convert -size 400x300 xc:navy "$work/src/background/wide shot.png"
 convert -size 300x300 xc:green "$work/src/background/square.jpg"
 convert -size 100x400 xc:red "$work/src/foreground/hero sprite.png"
 convert -size 50x50 xc:none "$work/src/foreground/small.gif"
+# A solid black background. Left alone, ImageMagick writes this as 1-bit
+# greyscale, which is a valid PNG and one the DS loader refuses, so the image
+# stage has to force a format it reads.
+convert -size 320x240 xc:black "$work/src/background/dark room.png"
 
 # A real MPEG-1 Layer 3 file at 44100, which the audio stage should copy rather
 # than re-encode.
@@ -75,7 +79,7 @@ else
     ok "dry run created nothing"
 fi
 check "dry run left the sources alone" \
-    "$(find "$work/src" -type f | wc -l)" "8"
+    "$(find "$work/src" -type f | wc -l)" "9"
 
 say "full conversion"
 if "$here/convert.sh" --title "Test Game" \
@@ -94,6 +98,12 @@ check "jpg background handled too" \
     "$(identify -format '%wx%h' "$work/game/background/square.png")" "256x192"
 check "sprite scaled to the default height" \
     "$(identify -format '%h' "$work/game/foreground/herosprite.png")" "180"
+# The colour type and bit depth live at bytes 24 and 25 of the file, and that is
+# what the DS reads. identify's %[type] describes the pixels instead, so a solid
+# rgba file with black pixels still reports Bilevel and tells you nothing about
+# whether the loader will accept it.
+check "a solid image is written in a format the DS reads" \
+    "$(od -An -tu1 -j24 -N2 "$work/game/background/darkroom.png" | tr -s ' ' | sed 's/^ //')" "8 6"
 check "sprite aspect ratio kept at 1:4" \
     "$(identify -format '%wx%h' "$work/game/foreground/herosprite.png")" "45x180"
 check "small sprite scaled up to the same height" \
