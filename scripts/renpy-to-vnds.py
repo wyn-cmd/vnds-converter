@@ -58,7 +58,7 @@ LITERAL_VALUE = re.compile(r"""^(?:-?\d+(?:\.\d+)?|["'][^"']*["']|True|False)$""
 REPORT_ORDER = [
     "labels", "dialogue lines", "scene changes", "sprites shown", "sprites hidden",
     "hides redrawn", "layered sprites flattened", "music", "sound", "choices",
-    "conditions", "jumps", "variables",
+    "conditions", "else blocks stepped over", "defaults written", "jumps", "variables",
     "delays", "character definitions", "image declarations", "audio aliases",
     "text tags removed", "interpolations converted",
 ]
@@ -222,7 +222,7 @@ def split_say(text):
     match = re.match(
         r'^([A-Za-z_][A-Za-z0-9_]*)'
         r'((?:\s+(?:@\s*)?[A-Za-z0-9_-]+)*)'
-        r'\s+(["\'].*)$',
+        r'\s*(["\'].*)$',
         text)
     if match:
         return match.group(1), match.group(3)
@@ -304,7 +304,7 @@ def collect_characters(paths):
     names = {}
     pattern = re.compile(
         r'^\s*define\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*Character\(\s*'
-        r'(?:(["\'])(.*?)\2|(None))',
+        r'(?:_\(\s*)?(?:(["\'])(.*?)\2|(None))',
         re.M)
     for path in paths:
         try:
@@ -497,6 +497,8 @@ class Converter:
         self.visible_sprites = {}
         self.reported_channels = set()
         self.reported_layered = set()
+        # Labels invented to step over an else block, since VNDS has no else.
+        self.else_counter = 0
 
     # -- helpers ---------------------------------------------------------
 
@@ -613,19 +615,51 @@ class Converter:
     # -- emission --------------------------------------------------------
 
     def emit(self, nodes):
-        for node in nodes:
+        # An if and its else are separate statements in the parse, but VNDS has
+        # no else, so the two have to be emitted together to step over one path.
+        index = 0
+        while index < len(nodes):
+            node = nodes[index]
+            following = nodes[index + 1] if index + 1 < len(nodes) else None
+            if (node.text.startswith("if ") and node.text.endswith(":")
+                    and following is not None
+                    and following.text.strip() == "else:"):
+                self.conditional(node, following)
+                index += 2
+                continue
             self.statement(node)
+            index += 1
 
     def statement(self, node):
         text = node.text
 
-        # Character definitions teach the display names.
+        # Character definitions teach the display names. The name is often wrapped
+        # for translation as Character(_("Ronan")), and without skipping that
+        # wrapper every line comes out spoken by the raw tag.
         define_match = re.match(
-            r'^define\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*Character\(\s*(["\'])(.*?)\2',
+            r'^define\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*Character\(\s*'
+            r'(?:_\(\s*)?(["\'])(.*?)\2',
             text)
         if define_match:
             self.characters[define_match.group(1)] = define_match.group(3)
             self.report.count("character definitions")
+            return
+
+        # A default is a variable set up before the story runs. VNDS has no way
+        # to declare one, so the value is written straight in, which also gives
+        # any later test on that variable something to compare against.
+        default_match = re.match(
+            r"^default\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$", text)
+        if default_match:
+            name, value = default_match.group(1), default_match.group(2).strip()
+            if LITERAL_VALUE.match(value):
+                self.output.append(f"setvar {name} = {value}")
+                self.report.count("defaults written")
+            else:
+                self.report.needs_attention(
+                    node.number, text,
+                    f"'{value[:40]}' is not a value setvar can hold",
+                    "work out the starting value yourself and write it in")
             return
 
         label_match = re.match(r"^label\s+([A-Za-z_][A-Za-z0-9_]*)\s*:", text)
@@ -845,14 +879,21 @@ class Converter:
         rest, transform_block = split_transform_block(rest)
         if transform_block:
             self.report.count("transform blocks dropped")
+        # A show can carry a position and a transition in either order, and a
+        # transform list after a comma, as in "show mc normal at left3 with
+        # dissolve" or "show uther blush at right3, bounce". The position is only
+        # the last word, so the other parts have to come off first or the whole
+        # tail ends up in the image name.
+        with_match = re.search(r"\s+with\s+(\S+)\s*$", rest)
+        if with_match:
+            rest = rest[:with_match.start()].strip()
+        if "," in rest:
+            rest = rest.split(",", 1)[0].strip()
         position = None
         position_match = re.search(r"\s+at\s+(\S+)\s*$", rest)
         if position_match:
             position = position_match.group(1)
             rest = rest[:position_match.start()].strip()
-        with_match = re.search(r"\s+with\s+(\S+)\s*$", rest)
-        if with_match:
-            rest = rest[:with_match.start()].strip()
         parts = rest.split()
         tag = parts[0] if parts else ""
 
@@ -1056,20 +1097,41 @@ class Converter:
             "pass the file that defines it, or fix the spelling")
         self.output.append(f"goto {target}")
 
-    def conditional(self, node):
+    def conditional(self, node, otherwise=None):
         condition = node.text[3:-1].strip()
-        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*\s*[!=]=\s*-?\d+", condition):
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*\s*==\s*-?\d+", condition):
             self.output.append(f"if {condition}")
             self.report.count("conditions")
             self.emit(node.children)
+            if otherwise is None:
+                self.output.append("fi")
+                return
+            # VNDS has no else, so the true path steps over the other one with a
+            # goto to a label placed after it. Every command here is one the
+            # shipped scripts use, and the two paths stay alternatives.
+            self.else_counter += 1
+            target = f"afterelse{self.else_counter}"
+            self.output.append(f"goto {target}")
             self.output.append("fi")
+            self.emit(otherwise.children)
+            self.output.append(f"label {target}")
+            self.report.count("else blocks stepped over")
             return
+
+        # Nothing VNDS can test. The branch is played as written without an if to
+        # guard it, and the other path is left out, so the story reads as one
+        # route rather than both at once.
         self.report.needs_attention(
             node.number, node.text,
-            "a VNDS condition compares one variable to a number",
+            "a VNDS condition compares one variable to a number, as in 'if myvar == 1'",
             "restructure as 'if myvar == 1', or branch with choice instead")
         self.emit(node.children)
-        self.output.append("fi")
+        if otherwise is not None:
+            self.report.needs_attention(
+                otherwise.number, otherwise.text,
+                "the other path of this condition cannot be chosen on the DS, so "
+                "it was left out",
+                "give both paths their own 'if myvar == 1' test, or a choice")
 
 
 def collect_labels(paths):
@@ -1142,7 +1204,16 @@ def move_main_label_first(lines, main_label):
     start = lines.index(marker)
     end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("label ")),
                len(lines))
-    return lines[start:end] + lines[:start] + lines[end:]
+    # What sat above the entry label splits in two. Setup statements, mostly the
+    # setvar lines a default turned into, ran before the story did in Ren'Py, so
+    # they belong directly under the label: left at the end of the file the DS
+    # would only reach them after the whole game had played out. A label block
+    # that happens to sit up there is the opposite case, since a label only runs
+    # when it is jumped to, so it stays out of the way at the end.
+    head = lines[:start]
+    cut = next((i for i, line in enumerate(head) if line.startswith("label ")), len(head))
+    setup, stray = head[:cut], head[cut:]
+    return [lines[start]] + setup + lines[start + 1:end] + stray + lines[end:]
 
 
 def default_config():

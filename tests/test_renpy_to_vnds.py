@@ -154,6 +154,44 @@ class StatementTests(ConverterTestCase):
             "s.rpy": 'define e = Character("Eileen")\ne "Hi."\n'})
         self.assertIn('text Eileen "Hi."', produced["s.scr"])
 
+    def test_a_name_wrapped_for_translation_is_read(self):
+        # Character(_("Ronan")) is the usual way to make a name translatable, and
+        # reading past the wrapper keeps the spoken name.
+        produced = self.convert({
+            "s.rpy": 'define r = Character(_("Ronan"))\nr "Hi."\n'})
+        self.assertIn('text Ronan "Hi."', produced["s.scr"])
+
+    def test_a_say_line_with_no_space_before_the_quote(self):
+        # Ren'Py allows e"There is a brush." with no space, and real scripts
+        # write it both ways.
+        produced = self.convert({
+            "s.rpy": 'define e = Character("Eileen")\nlabel start:\n'
+                     '    e"There is a brush."\n'})
+        self.assertIn('text Eileen "There is a brush."', produced["main.scr"])
+
+    def test_a_default_becomes_a_variable_the_script_can_read(self):
+        # The DS has no declarations, so a default has to be a plain assignment
+        # or a later condition reads a variable that was never set.
+        produced = self.convert({"s.rpy": (
+            "default Taste = 3\n"
+            "label start:\n"
+            "    if Taste == 3:\n"
+            "        \"Nice.\"\n")})
+        lines = self.lines_of(produced["main.scr"])
+        self.assertIn("setvar Taste = 3", lines)
+        self.assertIn("if Taste == 3", lines)
+
+    def test_setup_statements_run_before_the_story(self):
+        # A default is written above the entry label and runs before the story,
+        # so it has to sit under the label rather than after the whole file.
+        produced = self.convert({"s.rpy": (
+            "default Taste = 3\n"
+            "label start:\n"
+            "    \"The story begins.\"\n")})
+        lines = self.lines_of(produced["main.scr"])
+        self.assertEqual(lines[0], "label start")
+        self.assertEqual(lines[1], "setvar Taste = 3")
+
     def test_attributes_on_a_say_line_do_not_break_it(self):
         produced = self.convert({
             "s.rpy": 'define e = Character("Eileen")\ne happy "Hi."\n'})
@@ -204,6 +242,40 @@ class StatementTests(ConverterTestCase):
         # Anything with no answer configured is still refused rather than being
         # written out as an expression the DS would never evaluate.
         self.assertNotIn("setvar other", " ".join(lines))
+
+    def test_an_else_is_stepped_over_with_a_goto(self):
+        # VNDS has no else, so the true path has to jump past the other one.
+        produced = self.convert({"s.rpy": (
+            "label start:\n"
+            "    $ x = 1\n"
+            "    if x == 1:\n"
+            "        \"the true path\"\n"
+            "    else:\n"
+            "        \"the other path\"\n"
+            "    \"carry on\"\n")})
+        lines = self.lines_of(produced["main.scr"])
+        self.assertIn("if x == 1", lines)
+        self.assertIn("goto afterelse1", lines)
+        self.assertIn("label afterelse1", lines)
+        self.assertTrue(any("the other path" in line for line in lines))
+        # One if closed by exactly one fi: a stray fi would break the reading.
+        self.assertEqual(lines.count("fi"), 1)
+
+    def test_a_condition_vnds_cannot_test_leaves_no_stray_fi(self):
+        # A flag test has no VNDS form. The branch is played as written and the
+        # other path is left out, rather than both playing and contradicting.
+        produced = self.convert({"s.rpy": (
+            "label start:\n"
+            "    if Noodle:\n"
+            "        \"the true path\"\n"
+            "    else:\n"
+            "        \"the other path\"\n"
+            "    \"carry on\"\n")})
+        lines = self.lines_of(produced["main.scr"])
+        self.assertNotIn("fi", lines)
+        self.assertFalse(any(line.startswith("if ") for line in lines))
+        self.assertTrue(any("the true path" in line for line in lines))
+        self.assertFalse(any("the other path" in line for line in lines))
 
     def test_hide_is_emulated_by_redrawing_what_stays(self):
         produced = self.convert({"s.rpy": (
@@ -351,9 +423,10 @@ class ReportingTests(ConverterTestCase):
         self.convert({"s.rpy": "if flag and other:\n    \"Hi.\"\n"})
         self.assertIn("compares one variable to a number", self.report_for("s.scr"))
 
-    def test_else_is_reported(self):
+    def test_else_is_stepped_over_rather_than_reported(self):
         self.convert({"s.rpy": "if flag == 1:\n    \"A.\"\nelse:\n    \"B.\"\n"})
-        self.assertIn("no else", self.report_for("s.scr"))
+        self.assertIn("else blocks stepped over", self.report_for("s.scr"))
+        self.assertNotIn("no else", self.report_for("s.scr"))
 
     def test_python_blocks_and_ui_are_skipped_by_name(self):
         self.convert({"s.rpy": (
