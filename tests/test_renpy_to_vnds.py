@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 """Tests for the Ren'Py to VNDS script converter.
 
-The tests drive the real command line entry point, then assert on the .scr that
-lands on disk, because that is what the DS would read.
-
+The tests drive the real command line entry point, then assert on the .scr that lands on disk, because that is what the DS would read.
 Run directly, or via tests/run-tests.sh.
 """
 
@@ -17,8 +15,7 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONVERTER = os.path.join(HERE, os.pardir, "scripts", "renpy-to-vnds.py")
 
-# Loading the converter as a module would otherwise leave a __pycache__ folder
-# next to it, which is not something to publish.
+# Loading the converter as a module would otherwise leave a __pycache__ folder next to it, which is not something to publish.
 sys.dont_write_bytecode = True
 
 
@@ -45,33 +42,35 @@ class ConverterTestCase(unittest.TestCase):
     def setUp(self):
         self.work = tempfile.mkdtemp(prefix="vnds-renpy-test-")
         self.addCleanup(shutil.rmtree, self.work, ignore_errors=True)
+        self.last_code = None
+        self.out_dir = None
 
     def convert(self, files, extra=()):
         """files: {name: source text}. Returns {name: .scr text}."""
-        sources = []
-        for name, text in files.items():
-            sources.append(write(os.path.join(self.work, "src", name), text))
+        sources = [write(os.path.join(self.work, "src", name), text) for name, text in files.items()]
         out = os.path.join(self.work, "out")
         argv = [*sources, "-o", out, *extra]
-        stderr = sys.stderr
-        stdout = sys.stdout
+        
+        orig_stderr = sys.stderr
+        orig_stdout = sys.stdout
         try:
-            sys.stderr = open(os.devnull, "w", encoding="utf-8")
-            sys.stdout = open(os.devnull, "w", encoding="utf-8")
-            code = MODULE.main(argv)
+            with open(os.devnull, "w", encoding="utf-8") as devnull:
+                sys.stderr = devnull
+                sys.stdout = devnull
+                code = MODULE.main(argv)
         finally:
-            sys.stderr.close()
-            sys.stdout.close()
-            sys.stderr = stderr
-            sys.stdout = stdout
+            sys.stderr = orig_stderr
+            sys.stdout = orig_stdout
+            
         self.last_code = code
+        self.out_dir = out
 
         produced = {}
-        for name in os.listdir(out):
-            if name.endswith(".scr"):
-                with open(os.path.join(out, name), encoding="utf-8") as handle:
-                    produced[name] = handle.read()
-        self.out_dir = out
+        if os.path.exists(out):
+            for name in os.listdir(out):
+                if name.endswith(".scr"):
+                    with open(os.path.join(out, name), encoding="utf-8") as handle:
+                        produced[name] = handle.read()
         return produced
 
     def report_for(self, scr_name):
@@ -121,11 +120,7 @@ label ending:
     def test_only_witnessed_commands_are_emitted(self):
         produced = self.convert({"script.rpy": self.FIXTURE})
         self.assertIn("main.scr", produced)
-        unknown = []
-        for line in self.lines_of(produced["main.scr"]):
-            word = line.split()[0]
-            if word not in MODULE.VNDS_COMMANDS:
-                unknown.append(line)
+        unknown = [line for line in self.lines_of(produced["main.scr"]) if line.split()[0] not in MODULE.VNDS_COMMANDS]
         self.assertEqual(unknown, [], f"emitted commands with no evidence: {unknown}")
 
     def test_no_comments_or_invented_markers(self):
@@ -190,8 +185,7 @@ class StatementTests(ConverterTestCase):
                          ["setimg eileenhappy.png 50 27"])
 
     def test_a_name_prompt_can_be_answered_from_the_config(self):
-        # The DS cannot ask the player to type anything, so the answer has to be
-        # settled before the script is written.
+        # The DS cannot ask the player to type anything, so the answer has to be settled before the script is written.
         config = write(os.path.join(self.work, "cfg.json"),
                        '{"inputs": {"name": "Alex"}}')
         produced = self.convert({"s.rpy": (
@@ -201,8 +195,7 @@ class StatementTests(ConverterTestCase):
             extra=["-c", config])
         lines = self.lines_of(produced["main.scr"])
         self.assertIn('setvar name = "Alex"', lines)
-        # Anything with no answer configured is still refused rather than being
-        # written out as an expression the DS would never evaluate.
+        # Anything with no answer configured is still refused rather than being written out as an expression the DS would never evaluate.
         self.assertNotIn("setvar other", " ".join(lines))
 
     def test_hide_is_emulated_by_redrawing_what_stays(self):
@@ -213,8 +206,7 @@ class StatementTests(ConverterTestCase):
             "    show bjorn\n"
             "    hide lake neutral\n")})
         lines = self.lines_of(produced["main.scr"])
-        # The redraw reloads the background and re-places the sprites that stay,
-        # which is the pattern the finished games use.
+        # The redraw reloads the background and re-places the sprites that stay, which is the pattern the finished games use.
         self.assertEqual(lines, [
             "label start",
             "bgload bgroom.png",
@@ -239,8 +231,7 @@ class StatementTests(ConverterTestCase):
             'play sound "door.ogg"\n'
             "stop music\n"
             "stop sound\n")})
-        # The audio stage writes mp3 whatever went in, so the ogg is asked for
-        # by the name it will actually have.
+        # The audio stage writes mp3 whatever went in, so the ogg is asked for by the name it will actually have.
         self.assertEqual(self.lines_of(produced["s.scr"]),
                          ["music theme.mp3", "sound door.mp3", "music ~", "sound ~"])
 
@@ -446,8 +437,7 @@ class NameCollisionTests(ConverterTestCase):
     """A game split across several script.rpy files must not lose any of them."""
 
     def test_two_files_with_one_basename_both_survive(self):
-        # The first file becomes main.scr, which frees the name for the second,
-        # so no collision arises and nothing is lost.
+        # The first file becomes main.scr, which frees the name for the second, so no collision arises and nothing is lost.
         produced = self.convert({
             "chapter1/script.rpy": 'label start:\n    "One."\n',
             "chapter2/script.rpy": 'label two:\n    "Two."\n',
@@ -660,7 +650,6 @@ class RealGameTests(ConverterTestCase):
         })
         self.assertNotIn("setimg", produced["day1.scr"])
         report = self.report_for("day1.scr")
-        # Counted per line in the report, explained once on stderr for the run.
         self.assertIn("3  layered sprites skipped", report)
         self.assertIn("none, the whole file converted", report)
 
@@ -687,7 +676,6 @@ class RealGameTests(ConverterTestCase):
         self.assertIn("setimg lakeneutral.png", produced["s.scr"])
         self.assertIn("is not declared anywhere", self.report_for("s.scr"))
 
-
     def test_a_flattened_layered_sprite_is_used(self):
         write(os.path.join(self.work, "assets", "foreground", "lakeneutral.png"), "x")
         produced = self.convert({
@@ -706,7 +694,6 @@ class RealGameTests(ConverterTestCase):
             'show text "drowned in noise" as text4\n')})
         self.assertEqual(self.lines_of(produced["s.scr"]), [])
         self.assertIn("builds an image in code", self.report_for("s.scr"))
-
 
     def test_a_python_expression_is_not_written_as_a_setvar(self):
         produced = self.convert({"s.rpy": (
