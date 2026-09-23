@@ -1,35 +1,28 @@
 #!/usr/bin/env python3
-"""Convert Ren'Py script files into VNDS .scr script files.
-
-The command set this emits is not guesswork. It is the vocabulary that appears in
-finished VNDS games, counted across every script file the author had to hand:
-
-    text (3112) bgload (362) setimg (360) cleartext (136) if (117) gsetvar (115)
-    fi (112) music (80) jump (48) sound (41) label (33) goto (32) choice (27)
-    delay (12) setvar (4)
-
-Anything Ren'Py does that has no counterpart in that vocabulary is NOT invented.
-It is left out of the .scr and listed in a .report.txt written beside it, so you
-can fix it by hand. A converter that quietly drops a jump is worse than one that
-refuses to guess.
-
-The parse runs in two passes over a block tree. Pass one reads indentation into a
-tree of statements, so a menu can be emitted as one choice line followed by its
-branches, which is the shape VNDS expects. Pass two walks that tree and writes
-commands.
-
-Usage:
-    renpy-to-vnds.py [options] FILE.rpy [FILE.rpy ...]
-
-Options:
-    -o, --out-dir DIR     where to write the .scr files (default: beside the input)
-    -a, --assets DIR      asset folder to match image and audio names against
-    -c, --config FILE     JSON with character names and sprite positions
-    --main-label NAME     label that becomes main.scr (default: start)
-    --no-cleartext        do not add cleartext ! to choice branches
-    --allow-lossy         exit 0 even when something needs manual attention
-    --stdout              print the .scr instead of writing files
-"""
+# Convert Ren'Py script files into VNDS .scr script files.
+#
+# The command set this emits is based on vocabulary seen in actual VNDS games:
+# text (3112) bgload (362) setimg (360) cleartext (136) if (117) gsetvar (115)
+# fi (112) music (80) jump (48) sound (41) label (33) goto (32) choice (27)
+# delay (12) setvar (4)
+#
+# Anything Ren'Py does that has no counterpart is NOT invented. It is left out 
+# of the .scr and listed in a .report.txt written beside it.
+#
+# The parse runs in two passes over a block tree. Pass one reads indentation into 
+# a tree of statements. Pass two walks that tree and writes commands.
+#
+# Usage:
+#     renpy-to-vnds.py [options] FILE.rpy [FILE.rpy ...]
+#
+# Options:
+#     -o, --out-dir DIR     where to write the .scr files (default: beside the input)
+#     -a, --assets DIR      asset folder to match image and audio names against
+#     -c, --config FILE     JSON with character names and sprite positions
+#     --main-label NAME     label that becomes main.scr (default: start)
+#     --no-cleartext        do not add cleartext ! to choice branches
+#     --allow-lossy         exit 0 even when something needs manual attention
+#     --stdout              print the .scr instead of writing files
 
 import argparse
 import json
@@ -53,7 +46,7 @@ DEFAULT_POSITIONS = {"left": 0, "center": 78, "right": 156}
 
 # What a setvar can hold: a number or a quoted string, since the DS has no
 # interpreter to evaluate anything else.
-LITERAL_VALUE = re.compile(r"""^(?:-?\d+(?:\.\d+)?|["'][^"']*["']|True|False)$""")
+LITERAL_VALUE = re.compile(r"^(?:-?\d+(?:\.\d+)?|[\"'][^\"']*[\"']|True|False)$")
 
 REPORT_ORDER = [
     "labels", "dialogue lines", "scene changes", "sprites shown", "sprites hidden",
@@ -74,9 +67,8 @@ UNSUPPORTED_PREFIXES = (
 )
 
 
+# Collects what was translated and what was not.
 class Report:
-    """Collects what was translated and what was not."""
-
     def __init__(self, source):
         self.source = source
         self.translated = {}
@@ -129,9 +121,8 @@ class Report:
         return "\n".join(out)
 
 
+# One non-blank script line, with the lines indented under it.
 class Node:
-    """One non-blank script line, with the lines indented under it."""
-
     __slots__ = ("number", "indent", "text", "children")
 
     def __init__(self, number, indent, text):
@@ -141,8 +132,8 @@ class Node:
         self.children = []
 
 
+# Drop a trailing # comment, ignore any # inside a quoted string.
 def strip_comment(line):
-    """Drop a trailing # comment, ignoring any # inside a quoted string."""
     out = []
     quote = None
     index = 0
@@ -170,17 +161,17 @@ def strip_comment(line):
     return "".join(out).rstrip()
 
 
+# Turn a Ren'Py string literal into plain text.
 def unquote(text):
-    """Turn a Ren'Py string literal into plain text."""
     text = text.strip()
-    for quote in ('"""', "'''", '"', "'"):
+    for quote in ('"' * 3, "'" * 3, '"', "'"):
         if text.startswith(quote) and text.endswith(quote) and len(text) >= 2 * len(quote):
             return text[len(quote):-len(quote)]
     return text
 
 
+# Read a file into a list of top level Nodes, nesting by indentation.
 def parse_tree(path):
-    """Read a file into a list of top level Nodes, nesting by indentation."""
     with open(path, encoding="utf-8", errors="replace") as handle:
         raw_lines = handle.readlines()
 
@@ -205,18 +196,8 @@ def parse_tree(path):
     return roots
 
 
+# Split a say statement into (speaker tag, string literal).
 def split_say(text):
-    """Split a say statement into (speaker tag, string literal).
-
-    Handles the shapes seen in real scripts:
-        "narration"
-        e "spoken line"
-        e happy "spoken line"
-
-    Attributes such as 'happy' are dropped. In VNDS the sprite on screen is
-    chosen by setimg, not by the dialogue line, so there is nothing to carry
-    across. Returns (None, None) when the line is not a say statement.
-    """
     if text.startswith(('"', "'")):
         return None, text
     match = re.match(
@@ -229,34 +210,26 @@ def split_say(text):
     return None, None
 
 
+# Ren'Py image or audio expression to a VNDS filename.
 def normalize_asset(expr, kind="image"):
-    """Ren'Py image or audio expression to a VNDS filename.
-
-    'eileen happy' becomes 'eileenhappy.png', the same convention the rename
-    stage of this project enforces. Audio keeps whatever extension it has, since
-    appending .png to a track would be nonsense.
-    """
     cleaned = re.sub(r"\s+", "", expr.strip()).replace("/", "_")
     if kind == "image" and not cleaned.lower().endswith((".png", ".jpg", ".jpeg")):
         cleaned += ".png"
     return cleaned
 
 
+# Reproduce the filename the asset stages will produce.
 def to_output_name(basename, extension):
-    """Reproduce the filename the asset stages will produce.
-
-    images.sh writes <stem>.png and the rename stage strips the spaces out, so
-    'lake neutral.webp' becomes 'lakeneutral.png'. The script has to ask for that
-    exact name or the DS finds nothing.
-    """
     stem = os.path.splitext(os.path.basename(basename.strip()))[0]
     return re.sub(r"[\s\t]+", "", stem) + extension
 
 
+# Map normalised names to real filenames when an asset folder is given.
 def build_asset_index(asset_dir):
-    """Map normalised names to real filenames when an asset folder is given."""
     index = {}
-    for dirpath, dirnames, filenames in os.walk(asset_dir):
+    if not asset_dir or not os.path.isdir(asset_dir):
+        return index
+    for dirpath, _, filenames in os.walk(asset_dir):
         for name in filenames:
             if name.startswith("._"):
                 continue
@@ -271,36 +244,16 @@ def find_asset(index, wanted):
     return index.get(re.sub(r"[\s_-]+", "", stem).lower() + ext.lower())
 
 
+# Separate an image name from an ATL block opener.
 def split_transform_block(expression):
-    """Separate an image name from an ATL block opener.
-
-    Ren'Py lets a scene or show statement carry its own transform properties in
-    an indented block:
-
-        scene guesthouse_view_beforesunrise:
-            xpos 0.5
-            zoom 1.2
-
-    The DS has no transforms, so the properties are dropped, but the trailing
-    colon must not be treated as part of the filename. Returns (name, had_block).
-    """
     stripped = expression.strip()
     if stripped.endswith(":"):
         return stripped[:-1].strip(), True
     return expression, False
 
 
+# Map speaker tags to display names across every file given.
 def collect_characters(paths):
-    """Map speaker tags to display names across every file given.
-
-    Ren'Py defines characters at project scope, so a definition in one file is
-    visible from all of them. Reading only the file being converted loses the
-    names that live in a definitions file, which on a real game is most of them.
-
-    Character(None) is a narrator: it has no name to show, which is not the same
-    as a tag the converter failed to find, so it is recorded as None rather than
-    left out.
-    """
     names = {}
     pattern = re.compile(
         r'^\s*define\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*Character\(\s*'
@@ -320,16 +273,8 @@ def collect_characters(paths):
     return names
 
 
+# Find layeredimage declarations, which are sprites built from layers.
 def parse_layered_images(paths):
-    """Find layeredimage declarations, which are sprites built from layers.
-
-    A layeredimage assembles a character out of component files at runtime, one
-    for the body, one per expression, and so on. VNDS draws a single image with
-    setimg and has no way to compose anything, so a sprite like this has to be
-    flattened to one PNG per expression before it can be shown at all. Knowing
-    which names are layered lets the converter say that plainly instead of
-    emitting a reference to a file that does not exist.
-    """
     layered = {}
     for path in paths:
         try:
@@ -355,21 +300,8 @@ def parse_layered_images(paths):
     return layered
 
 
+# Map declared image names to the files they load.
 def parse_image_map(paths):
-    """Map declared image names to the files they load.
-
-    Real games declare images explicitly, in one of two shapes:
-
-        image lake neutral:
-            "images/sprites/lake/lake neutral.webp"
-
-        image werewolf = "images/sprites/misc/werewolf.webp"
-
-    The right hand side can also be an expression such as im.Scale("path", 20, 20),
-    so the first quoted string that looks like an image path is taken. Without
-    this map the converter has to guess a filename from the image name, and on a
-    game that keeps art in folders that guess is wrong every time.
-    """
     images = {}
     for path in paths:
         try:
@@ -395,7 +327,6 @@ def parse_image_map(paths):
                         source = candidate
                         break
 
-            # The path often sits on the next line, inside the block.
             if source is None and not rest:
                 for following in lines[index + 1:index + 8]:
                     if not following.strip():
@@ -412,14 +343,8 @@ def parse_image_map(paths):
     return images
 
 
+# Map audio aliases to their files.
 def parse_audio_map(paths):
-    """Map audio aliases to their files.
-
-        define audio.applause = "audio/applause.ogg"
-
-    A game that plays `play sound applause` means nothing without this, and the
-    alias names carry no hint of the filename behind them.
-    """
     audio = {}
     pattern = re.compile(
         r'^\s*define\s+audio\.([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(["\'])(.*?)\2', re.M)
@@ -434,22 +359,13 @@ def parse_audio_map(paths):
     return audio
 
 
+# Turn Ren'Py [variable] interpolation into the VNDS $variable form.
 def convert_interpolation(text):
-    """Turn Ren'Py [variable] interpolation into the VNDS $variable form.
-
-    The manual says a $ name is substituted directly, and that {$var} separates
-    it from the text around it, so braces go on when a word character follows.
-
-    That decision has to be made while scanning. Doing it in a second pass cannot
-    work, because once '[name]says' has become '$name' plus 'says' there is
-    nothing left to tell the end of the name from the start of the word.
-    """
     made = 0
     pieces = []
     index = 0
     pattern = re.compile(r"\[([^\[\]]+)\]")
 
-    # A doubled bracket is an escaped literal bracket in Ren'Py.
     protected = text.replace("[[", "\x00")
 
     while True:
@@ -473,8 +389,8 @@ def convert_interpolation(text):
     return "".join(pieces).replace("\x00", "["), made
 
 
+# Remove Ren'Py text styling such as {i} or {w=0.3}, keep {$var}.
 def strip_text_tags(text):
-    """Remove Ren'Py text styling such as {i} or {w=0.3}, keeping {$var}."""
     return re.sub(r"\{(?!\$[A-Za-z_])[^}]*\}", "", text)
 
 
@@ -492,20 +408,13 @@ class Converter:
         self.audio_aliases = project["audio"]
         self.layered = project["layered"]
         self.output = []
-        # State for emulating a sprite leaving the screen.
         self.current_background = None
         self.visible_sprites = {}
         self.reported_channels = set()
         self.reported_layered = set()
 
-    # -- helpers ---------------------------------------------------------
-
+    # The file behind an image name, longest matching name first.
     def declared_image(self, expression):
-        """The file behind an image name, longest matching name first.
-
-        Ren'Py allows trailing attributes, so 'lake neutral blush' has to be able
-        to fall back to 'lake neutral' and then to 'lake'.
-        """
         if not self.images:
             return None
         words = re.sub(r"\s+", " ", expression.strip()).split()
@@ -515,13 +424,8 @@ class Converter:
                 return self.images[candidate]
         return None
 
+    # The flattened png for a layered sprite, if the asset folder holds one.
     def flattened_sprite(self, expression):
-        """The flattened png for a layered sprite, if the asset folder holds one.
-
-        A layeredimage cannot be drawn by setimg, but flattening each expression
-        to a single png makes it ordinary art. When that has been done the file is
-        found here and the sprite converts like any other.
-        """
         index = self.options["assets"]
         if not index:
             return None
@@ -534,11 +438,8 @@ class Converter:
                 found = index[sorted(candidates, key=len)[0]]
         return to_output_name(os.path.basename(found), ".png") if found else None
 
+    # The layeredimage a show statement refers to, if any.
     def layered_name(self, expression):
-        """The layeredimage a show statement refers to, if any.
-
-        Longest name first, so 'cg rune forest 1' wins over 'cg'.
-        """
         if not self.layered:
             return None
         words = re.sub(r"\s+", " ", expression.strip()).split()
@@ -561,17 +462,12 @@ class Converter:
             if name.startswith("audio."):
                 name = name[len("audio."):]
             name = self.audio_aliases.get(name, name)
-            # The audio stage writes mp3 whatever went in, so an ogg reference
-            # has to be asked for by its mp3 name or the DS finds nothing.
             wanted = to_output_name(name, ".mp3")
 
         index = self.options["assets"]
         if index:
             found = find_asset(index, wanted)
             if not found and not into_audio:
-                # Nothing declared this name, so fall back to the file that starts
-                # with it: 'show lake' has to find 'lake neutral.webp'. The
-                # shortest match wins, since that is the likeliest base image.
                 stem = re.sub(r"[\s_-]+", "", os.path.splitext(wanted)[0]).lower()
                 candidates = [key for key in index if key.startswith(stem)]
                 if candidates:
@@ -582,8 +478,6 @@ class Converter:
                         "matching name was used",
                         f"check that {os.path.basename(found)} is the image you meant")
             if found:
-                # Normalised like every other name, because the asset stages
-                # rebake images to png, audio to mp3, and strip the spaces out.
                 return to_output_name(os.path.basename(found),
                                       ".mp3" if into_audio else ".png")
             self.report.needs_attention(
@@ -596,10 +490,7 @@ class Converter:
         if tag in self.characters:
             name = self.characters[tag]
             if not name:
-                # A narrator, defined as Character(None): no name to print.
                 return None
-            # A name can itself hold interpolation, as in Character("[player]u"),
-            # which the DS needs in its own form.
             name, _ = convert_interpolation(name)
             if not self.options["keep_tags"]:
                 name = strip_text_tags(name)
@@ -610,8 +501,6 @@ class Converter:
             f'add define {tag} = Character("Display Name") to your script')
         return tag
 
-    # -- emission --------------------------------------------------------
-
     def emit(self, nodes):
         for node in nodes:
             self.statement(node)
@@ -619,7 +508,6 @@ class Converter:
     def statement(self, node):
         text = node.text
 
-        # Character definitions teach the display names.
         define_match = re.match(
             r'^define\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*Character\(\s*(["\'])(.*?)\2',
             text)
@@ -635,8 +523,6 @@ class Converter:
             self.emit(node.children)
             return
 
-        # Declarations that feed the name maps, and presentation statements that
-        # simply have no counterpart on the DS.
         if text.startswith("image "):
             self.report.count("image declarations")
             return
@@ -644,8 +530,6 @@ class Converter:
             self.report.count("audio aliases")
             return
         if text.startswith("with "):
-            # A standalone transition follows a scene or show that already
-            # carried its own fade.
             self.report.count("transitions skipped")
             return
         if re.match(r"^(?:nvl\b|window\b|camera\b)", text):
@@ -699,10 +583,6 @@ class Converter:
             name = chosen.group(1)
             value = chosen.group(3).strip() if assign_match else chosen.group(2).strip()
             if not LITERAL_VALUE.match(value):
-                # setvar takes a number or a quoted string and nothing else, so a
-                # python expression would sit in the script unevaluated. An input
-                # prompt cannot be asked at all on the DS, so a fixed answer from
-                # the config stands in for whatever the player would have typed.
                 default = self.options["inputs"].get(name)
                 if default is not None:
                     self.output.append(f'setvar {name} = "{default}"')
@@ -760,8 +640,6 @@ class Converter:
             self.emit(node.children)
             return
 
-        # The extend statement continues the previous line of dialogue. The DS
-        # has no way to append to a text buffer, so it becomes its own line.
         if text == "extend" or text.startswith("extend "):
             literal = text[len("extend"):].strip()
             if literal.startswith(('"', "'")):
@@ -769,8 +647,6 @@ class Converter:
             self.report.count("extend lines")
             return
 
-        # Dialogue last, so a quoted line starting with a command word is not
-        # mistaken for that command.
         tag, literal = split_say(text)
         if literal is not None:
             return self.dialogue(node, tag, literal)
@@ -794,7 +670,6 @@ class Converter:
             if self.options["keep_tags"]:
                 self.report.count("text tags kept", tags)
             else:
-                # The DS renders none of them, so {i} would appear as literal text.
                 text = strip_text_tags(text)
                 self.report.count("text tags removed", tags)
         speech = text.replace('\\"', "'").replace("\\n", " ").replace('"', "'").strip()
@@ -803,7 +678,6 @@ class Converter:
             self.output.append(f'text {name} "{speech}"')
         else:
             self.output.append(f'text "{speech}"')
-        # Every dialogue line in the games studied is followed by a continue.
         self.output.append("text ~")
         self.report.count("dialogue lines")
 
@@ -820,8 +694,6 @@ class Converter:
             rest = rest[:with_match.start()].strip()
         filename = self.asset(rest, "background", node)
         if with_clause and with_clause.lower().startswith("dissolve"):
-            # A dissolve is what the fade argument already gives us, so it is
-            # not worth a line of the report.
             with_clause = "dissolve"
         if with_clause and with_clause.lower() not in ("none", "dissolve", "fade"):
             self.report.needs_attention(
@@ -829,11 +701,9 @@ class Converter:
                 f"transition '{with_clause}' has no VNDS equivalent",
                 "the DS has one hard cut and one fade, so a fade was used instead")
         if with_clause:
-            # A fade is an extra argument on bgload, as in 'bgload black.png 10'.
             self.output.append(f"bgload {filename} {self.options['fade_frames']}")
         else:
             self.output.append(f"bgload {filename}")
-        # A scene clears the layer in Ren'Py, so the tracked sprites go with it.
         self.current_background = filename
         self.visible_sprites.clear()
         self.report.count("scene changes")
@@ -872,15 +742,11 @@ class Converter:
         if layered:
             filename = self.flattened_sprite(rest)
             if not filename:
-                # Counted per line and explained once per run rather than per
-                # file: a real game shows the same sprite hundreds of times.
                 self.report.count("layered sprites skipped")
                 self.reported_layered.add(layered)
                 return
             self.report.count("layered sprites flattened")
         else:
-            # A displayable is built in code rather than loaded from a file, so
-            # there is nothing the DS can be pointed at.
             displayable = re.match(
                 r"^(text|Solid|Null|Composite|Transform|Frame|Movie|Image)\b", rest)
             if displayable:
@@ -896,9 +762,6 @@ class Converter:
         if tag in self.options["positions"]:
             x = self.options["positions"][tag]
         elif position and position in self.options["positions"]:
-            # Games often place sprites with their own transform names, such as
-            # left1 or right2, rather than left and right, so any name in the
-            # positions map counts.
             x = self.options["positions"][position]
         else:
             x = self.options["positions"]["center"]
@@ -911,20 +774,16 @@ class Converter:
         self.visible_sprites[tag] = (filename, x)
         self.report.count("sprites shown")
 
+    # Redraw the layer the way the finished games do when a sprite leaves.
     def redraw_sprites(self):
-        """Redraw the layer the way the finished games do when a sprite leaves.
-
-        There is no hide command in the language, so the reference scripts load
-        the background again and re-issue setimg for the sprites that stay.
-        """
         if self.current_background:
             self.output.append(f"bgload {self.current_background}")
         for filename, x in self.visible_sprites.values():
             self.output.append(f"setimg {filename} {x} {self.options['sprite_y']}")
         self.report.count("hides redrawn")
 
+    # VNDS has two audio channels, so custom ones have to pick a side.
     def channel_command(self, channel, node):
-        """VNDS has two audio channels, so custom ones have to pick a side."""
         if channel == "music":
             return "music"
         if channel in ("sound", "audio", "sfx", "voice"):
@@ -951,8 +810,6 @@ class Converter:
             self.report.count(command)
             return
 
-        # A quoted path is taken first, so a filename that happens to contain
-        # 'fadein' or 'volume' is not mistaken for a clause.
         quoted = re.match(r'^(["\'])(.*?)\1(.*)$', rest)
         if quoted:
             expr = quoted.group(2)
@@ -977,8 +834,6 @@ class Converter:
             return
 
         if expr.startswith("<"):
-            # Ren'Py ships pseudo-files such as <silence1.mp3>. There is no file
-            # behind them, so emitting a name would just be a dead reference.
             self.report.skipped_statement(
                 node.number, node.text,
                 f"'{expr}' is a built-in Ren'Py file with nothing behind it")
@@ -1024,7 +879,6 @@ class Converter:
                     "check the option by hand, or split the menu in two")
             self.output.append(f"if selected == {index}")
             if not self.options["no_cleartext"]:
-                # Both finished games open every choice branch this way.
                 self.output.append("cleartext !")
             self.emit(child.children)
             self.output.append("fi")
@@ -1037,8 +891,8 @@ class Converter:
         self.goto_label(node, target)
         self.report.count("jumps")
 
+    # A label in this file is a goto, one in another file is a jump.
     def goto_label(self, node, target):
-        """A label in this file is a goto, one in another file is a jump."""
         own_labels = self.labels_by_file.get(self.source_path, set())
         if target in own_labels:
             self.output.append(f"goto {target}")
@@ -1047,7 +901,6 @@ class Converter:
             if path != self.source_path and target in labels:
                 other = self.output_names.get(
                     path, os.path.splitext(os.path.basename(path))[0] + ".scr")
-                # 'jump file.scr label' is a real form in the studied games.
                 self.output.append(f"jump {other} {target}")
                 return
         self.report.needs_attention(
@@ -1072,8 +925,8 @@ class Converter:
         self.output.append("fi")
 
 
+# Map each file to the labels it defines, for cross file jumps.
 def collect_labels(paths):
-    """Map each file to the labels it defines, for cross file jumps."""
     labels = {}
     for path in paths:
         found = set()
@@ -1085,14 +938,8 @@ def collect_labels(paths):
     return labels
 
 
+# Pick a unique .scr name per input file before anything is written.
 def assign_output_names(sources, labels_by_file, main_label):
-    """Pick a unique .scr name per input file before anything is written.
-
-    Two files called script.rpy in different folders would otherwise overwrite
-    each other, and a game split across several script.rpy files is exactly what
-    someone converts. The folder name is used to tell them apart, because that
-    is more recognisable than a number.
-    """
     main_file = None
     for path in sources:
         if main_label in labels_by_file.get(path, set()):
@@ -1128,14 +975,8 @@ def assign_output_names(sources, labels_by_file, main_label):
     return names, collisions, extra_mains
 
 
+# Put the entry label at the top of main.scr.
 def move_main_label_first(lines, main_label):
-    """Put the entry label at the top of main.scr.
-
-    A VNDS script is read from its first line, and only goto or jump moves
-    execution elsewhere. In Ren'Py the entry point is a label wherever it happens
-    to sit in the file, so a game whose start label is in the middle would begin
-    by running whatever is written above it.
-    """
     marker = f"label {main_label}"
     if not lines or lines[0] == marker or marker not in lines:
         return lines
@@ -1174,8 +1015,8 @@ def parse_config(path, options):
     return options
 
 
+# Count real statements, ignore the continue prompts the converter adds.
 def count_statements(lines):
-    """Count real statements, ignoring the continue prompts the converter adds."""
     return sum(1 for line in lines if line.strip() != "text ~")
 
 
@@ -1208,7 +1049,11 @@ def main(argv=None):
     if args.no_hide_redraw:
         options["hide_redraw"] = False
     if args.config:
-        options = parse_config(args.config, options)
+        try:
+            options = parse_config(args.config, options)
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"error: failed to load config file '{args.config}': {e}", file=sys.stderr)
+            return 1
     options["assets"] = build_asset_index(args.assets) if args.assets else None
 
     sources = [path for path in args.inputs if os.path.isfile(path)]
@@ -1218,8 +1063,6 @@ def main(argv=None):
         return 1
 
     labels_by_file = collect_labels(sources)
-    # Character names, image files and audio aliases are defined at project
-    # scope in Ren'Py, so they are read from every file before any conversion.
     project = {
         "characters": collect_characters(sources),
         "images": parse_image_map(sources),
@@ -1274,10 +1117,15 @@ def main(argv=None):
             os.makedirs(out_dir, exist_ok=True)
             scr_path = os.path.join(out_dir, out_name)
             report_path = scr_path[:-4] + ".report.txt"
-            with open(scr_path, "w", encoding="utf-8") as handle:
-                handle.write("\n".join(output) + "\n")
-            with open(report_path, "w", encoding="utf-8") as handle:
-                handle.write(report.text())
+            try:
+                with open(scr_path, "w", encoding="utf-8") as handle:
+                    handle.write("\n".join(output) + "\n")
+                with open(report_path, "w", encoding="utf-8") as handle:
+                    handle.write(report.text())
+            except OSError as e:
+                print(f"error: failed to write output files for '{source}': {e}", file=sys.stderr)
+                problems += 1
+                continue
             print(f"{os.path.basename(source)} -> {os.path.basename(scr_path)} "
                   f"({count_statements(output)} statements, "
                   f"{len(report.attention)} need attention, "
