@@ -49,6 +49,7 @@ mkdir -p "$work/src/background" "$work/src/foreground" "$work/src/sound"
 
 convert -size 400x300 xc:navy "$work/src/background/wide shot.png"
 convert -size 300x300 xc:green "$work/src/background/square.jpg"
+convert -size 200x200 xc:blue "$work/src/background/photo.jfif"
 convert -size 100x400 xc:red "$work/src/foreground/hero sprite.png"
 convert -size 50x50 xc:none "$work/src/foreground/small.gif"
 
@@ -75,7 +76,7 @@ else
     ok "dry run created nothing"
 fi
 check "dry run left the sources alone" \
-    "$(find "$work/src" -type f | wc -l)" "8"
+    "$(find "$work/src" -type f | wc -l)" "9"
 
 say "full conversion"
 if "$here/convert.sh" --title "Test Game" \
@@ -92,6 +93,8 @@ check "background forced to the screen size" \
     "$(identify -format '%wx%h' "$work/game/background/wideshot.png")" "256x192"
 check "jpg background handled too" \
     "$(identify -format '%wx%h' "$work/game/background/square.png")" "256x192"
+check "jfif background handled too" \
+    "$(identify -format '%wx%h' "$work/game/background/photo.png")" "256x192"
 check "sprite scaled to the default height" \
     "$(identify -format '%h' "$work/game/foreground/herosprite.png")" "180"
 check "sprite aspect ratio kept at 1:4" \

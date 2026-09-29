@@ -103,7 +103,7 @@ while IFS= read -r -d '' path; do
     log "converted: $base -> $name.png"
     converted=$((converted + 1))
 done < <(find "$source_dir" -maxdepth 1 -type f \
-    \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.gif' \
+    \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.jfif' -o -iname '*.gif' \
     -o -iname '*.bmp' -o -iname '*.tiff' -o -iname '*.webp' -o -iname '*.pnm' \
     -o -iname '*.heic' \) -print0)
 
