@@ -820,6 +820,8 @@ class Converter:
 
     def dialogue(self, node, tag, literal):
         text = unquote(literal)
+        if not text:
+            return
         text, substitutions = convert_interpolation(text)
         if substitutions:
             self.report.count("interpolations converted", substitutions)
