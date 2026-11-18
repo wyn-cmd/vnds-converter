@@ -821,6 +821,9 @@ class Converter:
     def dialogue(self, node, tag, literal):
         text = unquote(literal)
         text, substitutions = convert_interpolation(text)
+        # Use space if empty to prevent length check errors
+        if not text:
+            text = " "
         if substitutions:
             self.report.count("interpolations converted", substitutions)
         tags = len(re.findall(r"\{[^}]*\}", text))
