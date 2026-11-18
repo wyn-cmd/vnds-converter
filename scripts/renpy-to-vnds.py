@@ -819,7 +819,12 @@ class Converter:
                                       "not recognised by the converter")
 
     def dialogue(self, node, tag, literal):
+        # check that literal is not empty and return early if blank
+        if not literal:
+            return
         text = unquote(literal)
+        if not text.strip():
+            return
         text, substitutions = convert_interpolation(text)
         if substitutions:
             self.report.count("interpolations converted", substitutions)
